@@ -39,6 +39,16 @@ cp .env.example .env
 
 ## Running
 
+Single command (starts the API and opens `frontend/index.html` in your default browser):
+
+```bash
+./start.sh
+```
+
+Press `Ctrl+C` to stop; it also shuts down the background uvicorn process.
+
+Manual alternative:
+
 ```bash
 uvicorn backend.main:app --reload
 ```
