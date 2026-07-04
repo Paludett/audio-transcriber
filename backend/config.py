@@ -15,3 +15,11 @@ DEFAULT_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(100 * 1024 * 1024)))
 
 ALLOWED_EXTENSIONS = {".opus", ".ogg", ".m4a", ".mp3", ".wav"}
+
+# YouTube transcription pipeline (captions first, Whisper fallback)
+YOUTUBE_MAX_DURATION_SECONDS = int(os.getenv("YOUTUBE_MAX_DURATION_SECONDS", str(2 * 60 * 60)))
+YOUTUBE_MAX_DOWNLOAD_BYTES = int(os.getenv("YOUTUBE_MAX_DOWNLOAD_BYTES", str(500 * 1024 * 1024)))
+YOUTUBE_ACCEPT_AUTO_CAPTIONS = os.getenv("YOUTUBE_ACCEPT_AUTO_CAPTIONS", "true").lower() in ("1", "true", "yes")
+
+# Security boundary, not runtime config: keep hardcoded like ALLOWED_EXTENSIONS above.
+ALLOWED_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}

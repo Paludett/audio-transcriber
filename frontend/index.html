@@ -31,6 +31,25 @@
   h1 { font-size: 1.4rem; margin-bottom: 4px; }
   p.subtitle { color: var(--muted); margin-top: 0; margin-bottom: 24px; }
 
+  #tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  #tabs button {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border);
+  }
+  #tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #youtubePanel input {
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.95rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    padding: 12px 14px;
+  }
+
   #dropzone {
     border: 2px dashed var(--border);
     border-radius: 12px;
@@ -108,14 +127,25 @@
 <body>
 <main>
   <h1>Local Transcriber</h1>
-  <p class="subtitle">Drag an audio file (.opus, .ogg, .m4a, .mp3, .wav) or click to select one.</p>
+  <p class="subtitle">Drag an audio file (.opus, .ogg, .m4a, .mp3, .wav) or paste a YouTube link.</p>
 
-  <div id="dropzone">
-    <p><strong>Drop the file here</strong></p>
-    <p>or click to choose</p>
-    <input type="file" id="fileInput" accept=".opus,.ogg,.m4a,.mp3,.wav">
+  <div id="tabs">
+    <button id="tabFile" class="active">Audio file</button>
+    <button id="tabYoutube">YouTube link</button>
   </div>
-  <div id="fileInfo"></div>
+
+  <div id="filePanel">
+    <div id="dropzone">
+      <p><strong>Drop the file here</strong></p>
+      <p>or click to choose</p>
+      <input type="file" id="fileInput" accept=".opus,.ogg,.m4a,.mp3,.wav">
+    </div>
+    <div id="fileInfo"></div>
+  </div>
+
+  <div id="youtubePanel" style="display: none;">
+    <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
+  </div>
 
   <div class="row">
     <label for="language">Language:</label>
@@ -147,8 +177,15 @@
 </main>
 
 <script>
-const API_URL = "http://localhost:8000/transcribe";
+const API_BASE = "http://localhost:8000";
+const FILE_API_URL = `${API_BASE}/transcribe`;
+const YOUTUBE_API_URL = `${API_BASE}/transcribe/youtube`;
 
+const tabFile = document.getElementById("tabFile");
+const tabYoutube = document.getElementById("tabYoutube");
+const filePanel = document.getElementById("filePanel");
+const youtubePanel = document.getElementById("youtubePanel");
+const youtubeUrlInput = document.getElementById("youtubeUrl");
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("fileInput");
 const fileInfo = document.getElementById("fileInfo");
@@ -164,6 +201,25 @@ const exportBtn = document.getElementById("exportBtn");
 const copyFeedback = document.getElementById("copyFeedback");
 
 let selectedFile = null;
+let mode = "file";
+let lastResultName = "transcription";
+
+function setMode(next) {
+  mode = next;
+  const isFile = mode === "file";
+  tabFile.classList.toggle("active", isFile);
+  tabYoutube.classList.toggle("active", !isFile);
+  filePanel.style.display = isFile ? "block" : "none";
+  youtubePanel.style.display = isFile ? "none" : "block";
+  transcribeBtn.disabled = isFile ? !selectedFile : !youtubeUrlInput.value.trim();
+  hideError();
+}
+
+tabFile.addEventListener("click", () => setMode("file"));
+tabYoutube.addEventListener("click", () => setMode("youtube"));
+youtubeUrlInput.addEventListener("input", () => {
+  transcribeBtn.disabled = !youtubeUrlInput.value.trim();
+});
 
 dropzone.addEventListener("click", () => fileInput.click());
 
@@ -199,32 +255,48 @@ function hideError() {
   errorEl.style.display = "none";
 }
 
+function renderResult(data) {
+  resultText.value = data.text;
+
+  const parts = [`Duration: ${data.duration_seconds.toFixed(1)}s`, `Processed in: ${data.processing_time_seconds.toFixed(1)}s`, `${data.segments.length} segment(s)`];
+  if (data.video_title) parts.unshift(data.video_title);
+  if (data.source) parts.push(`Source: ${data.source === "captions" ? "YouTube captions" : "Whisper"}`);
+  metaEl.textContent = parts.join(" · ");
+
+  lastResultName = data.video_title || data.video_id || (selectedFile ? selectedFile.name.replace(/\.[^.]+$/, "") : "transcription");
+  resultPanel.style.display = "block";
+}
+
 transcribeBtn.addEventListener("click", async () => {
-  if (!selectedFile) return;
+  if (mode === "file" && !selectedFile) return;
+  if (mode === "youtube" && !youtubeUrlInput.value.trim()) return;
 
   hideError();
   resultPanel.style.display = "none";
   statusEl.style.display = "flex";
   transcribeBtn.disabled = true;
 
-  const formData = new FormData();
-  formData.append("file", selectedFile);
-  if (languageSelect.value) formData.append("language", languageSelect.value);
-
   try {
-    const resp = await fetch(API_URL, { method: "POST", body: formData });
-    const data = await resp.json();
+    let resp;
+    if (mode === "file") {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      if (languageSelect.value) formData.append("language", languageSelect.value);
+      resp = await fetch(FILE_API_URL, { method: "POST", body: formData });
+    } else {
+      resp = await fetch(YOUTUBE_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: youtubeUrlInput.value.trim(), language: languageSelect.value || null }),
+      });
+    }
 
+    const data = await resp.json();
     if (!resp.ok) {
       throw new Error(data.detail || `Error ${resp.status}`);
     }
 
-    resultText.value = data.text;
-    metaEl.textContent =
-      `Duration: ${data.duration_seconds.toFixed(1)}s · ` +
-      `Processed in: ${data.processing_time_seconds.toFixed(1)}s · ` +
-      `${data.segments.length} segment(s)`;
-    resultPanel.style.display = "block";
+    renderResult(data);
   } catch (err) {
     showError(err.message || "Failed to transcribe. Check whether the backend is running.");
   } finally {
@@ -243,9 +315,8 @@ exportBtn.addEventListener("click", () => {
   const blob = new Blob([resultText.value], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const base = selectedFile ? selectedFile.name.replace(/\.[^.]+$/, "") : "transcription";
   a.href = url;
-  a.download = `${base}.txt`;
+  a.download = `${lastResultName}.txt`;
   a.click();
   URL.revokeObjectURL(url);
 });

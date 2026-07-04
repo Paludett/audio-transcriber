@@ -1,6 +1,6 @@
 # Local Transcriber
 
-Local web app for transcribing audio files (`.opus`/`.ogg` from WhatsApp, `.m4a`/`.mp3`/`.wav`) with `faster-whisper`. Runs 100% on `localhost`, with no deployment, authentication, or database.
+Local web app for transcribing audio files (`.opus`/`.ogg` from WhatsApp, `.m4a`/`.mp3`/`.wav`) with `faster-whisper`, or a YouTube URL (via official captions, falling back to Whisper if none exist). Runs 100% on `localhost`, with no deployment, authentication, or database.
 
 ## Requirements
 
@@ -71,6 +71,9 @@ Variables in `.env` (see `.env.example`):
 | `WHISPER_COMPUTE_TYPE` | `int8_float16` | Light VRAM quantization. |
 | `WHISPER_DEVICE` | `cuda` | If loading fails (for example OOM), the backend automatically falls back to `cpu` and logs a warning. |
 | `WHISPER_LANGUAGE` | `en` | Default forced language (avoids automatic detection and runs faster). Can be overridden per request. |
+| `YOUTUBE_MAX_DURATION_SECONDS` | `7200` (2h) | Videos longer than this are rejected before download. Also guards against livestreams (which is checked separately). |
+| `YOUTUBE_MAX_DOWNLOAD_BYTES` | `524288000` (500MB) | Backstop cap on the downloaded audio track, in case reported duration is wrong. |
+| `YOUTUBE_ACCEPT_AUTO_CAPTIONS` | `true` | Whether YouTube's auto-generated (ASR) captions count as usable captions. If `false`, only human-made captions skip Whisper. |
 
 The model is loaded **once** during FastAPI startup (`lifespan` event), not on every request.
 
@@ -112,17 +115,47 @@ Response:
 
 All audio is converted with `ffmpeg` to 16kHz mono WAV before being sent to Whisper. Temporary files are deleted after transcription, whether it succeeds or fails.
 
+`POST /transcribe/youtube` — `application/json`:
+- `url`: a `youtube.com`/`youtu.be` video URL
+- `language` (optional): language code (`en`, `pt`, ...). If omitted, uses `WHISPER_LANGUAGE`.
+
+Tries YouTube's own captions first (manually-created, then auto-generated if `YOUTUBE_ACCEPT_AUTO_CAPTIONS=true`); if none are available, downloads the audio track with `yt-dlp` and runs it through the same `ffmpeg` + Whisper pipeline as `/transcribe`.
+
+Response (superset of `/transcribe`'s shape):
+
+```json
+{
+  "text": "full transcribed text",
+  "segments": [{"start": 0.0, "end": 3.2, "text": "..."}],
+  "duration_seconds": 12.4,
+  "processing_time_seconds": 3.1,
+  "source": "captions",
+  "video_id": "dQw4w9WgXcQ",
+  "video_title": "...",
+  "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+}
+```
+
+`source` is `"captions"` or `"whisper"`, depending on which path served the request.
+
+Errors: `400` (not a YouTube URL / bad video ID), `404` (video private/deleted/region-blocked), `413` (exceeds `YOUTUBE_MAX_DURATION_SECONDS`), `422` (live stream in progress, or audio download/ffmpeg conversion failed), `500` (Whisper transcription failed).
+
+This endpoint needs outbound internet access to reach YouTube, unlike the pure file-upload flow.
+
+`yt-dlp` ships frequent releases to keep up with YouTube's changes — if YouTube requests start failing with a "signature extraction" or similar error, `pip install -U yt-dlp` is the first thing to try.
+
 ## Structure
 
 ```
 local-transcriber/
 ├── backend/
-│   ├── main.py              # FastAPI app, endpoint /transcribe
+│   ├── main.py              # FastAPI app, endpoints /transcribe and /transcribe/youtube
 │   ├── transcriber.py       # faster-whisper wrapper
 │   ├── audio_utils.py       # ffmpeg conversion
+│   ├── youtube_utils.py     # YouTube URL validation, captions, yt-dlp download
 │   └── config.py            # config via env vars
 ├── frontend/
-│   └── index.html           # drag&drop + fetch
+│   └── index.html           # drag&drop + YouTube link tabs + fetch
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -130,4 +163,4 @@ local-transcriber/
 
 ## Out of scope
 
-Authentication, multi-user sup  , async queue, persisted history, speaker diarization, and real-time streaming.
+Authentication, multi-user support, async queue, persisted history, speaker diarization, real-time streaming, YouTube playlist/batch URLs, and caching of previously-fetched videos.
