@@ -1,6 +1,5 @@
 import logging
 import os
-import shutil
 import tempfile
 from contextlib import asynccontextmanager
 
@@ -8,10 +7,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import config
-from .audio_utils import convert_to_wav
-from .transcriber import get_active_device, load_model, transcribe_audio
-from .youtube_utils import canonical_url, download_audio, extract_video_id, fetch_captions, get_video_info
+from . import config, jobs, pipeline
+from .transcriber import get_active_device, load_model
+from .youtube_utils import canonical_url, extract_video_id
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("main")
@@ -20,6 +18,7 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_model()
+    jobs.start_worker()
     yield
 
 
@@ -52,47 +51,7 @@ async def transcribe_youtube(payload: YoutubeTranscribeRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     url = canonical_url(video_id)
-    info = get_video_info(video_id, url)
-
-    if info["duration_seconds"] > config.YOUTUBE_MAX_DURATION_SECONDS:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Video exceeds the maximum allowed duration of {config.YOUTUBE_MAX_DURATION_SECONDS}s.",
-        )
-
-    captions = fetch_captions(video_id, payload.language)
-    if captions is not None:
-        return {
-            **captions,
-            "duration_seconds": info["duration_seconds"],
-            "source": "captions",
-            "video_id": video_id,
-            "video_title": info["title"],
-            "video_url": url,
-        }
-
-    raw_path, yt_tmp_dir = download_audio(video_id, url)
-    wav_path = None
-    try:
-        wav_path = convert_to_wav(raw_path)
-
-        try:
-            result = transcribe_audio(wav_path, language=payload.language)
-        except Exception as exc:
-            logger.error("YouTube transcription failed: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Failed to transcribe audio: {exc}")
-
-        return {
-            **result,
-            "source": "whisper",
-            "video_id": video_id,
-            "video_title": info["title"],
-            "video_url": url,
-        }
-    finally:
-        shutil.rmtree(yt_tmp_dir, ignore_errors=True)
-        if wav_path and os.path.exists(wav_path):
-            os.remove(wav_path)
+    return pipeline.process_youtube_job(video_id, url, payload.language)
 
 
 @app.post("/transcribe")
@@ -105,7 +64,6 @@ async def transcribe(file: UploadFile = File(...), language: str | None = Form(N
         )
 
     raw_fd, raw_path = tempfile.mkstemp(suffix=ext)
-    wav_path = None
     try:
         with os.fdopen(raw_fd, "wb") as f:
             size = 0
@@ -117,17 +75,89 @@ async def transcribe(file: UploadFile = File(...), language: str | None = Form(N
 
         if size == 0:
             raise HTTPException(status_code=400, detail="Empty file.")
+    except Exception:
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
+        raise
 
-        wav_path = convert_to_wav(raw_path)
+    return pipeline.process_file_job(raw_path, language)
 
+
+@app.post("/jobs/files")
+async def create_file_jobs(files: list[UploadFile] = File(...), language: str | None = Form(None)):
+    created = []
+    for file in files:
+        name = file.filename or "unknown"
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in config.ALLOWED_EXTENSIONS:
+            job = jobs.create_error_job(
+                "file", name,
+                f"Extension '{ext}' is not supported. Use: {', '.join(sorted(config.ALLOWED_EXTENSIONS))}",
+            )
+            created.append(job.id)
+            continue
+
+        raw_fd, raw_path = tempfile.mkstemp(suffix=ext)
         try:
-            result = transcribe_audio(wav_path, language=language)
-        except Exception as exc:
-            logger.error("Transcription failed: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Failed to transcribe audio: {exc}")
+            size = 0
+            oversized = False
+            with os.fdopen(raw_fd, "wb") as f:
+                while chunk := await file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > config.MAX_UPLOAD_SIZE:
+                        oversized = True
+                        break
+                    f.write(chunk)
 
-        return result
-    finally:
-        for p in (raw_path, wav_path):
-            if p and os.path.exists(p):
-                os.remove(p)
+            if oversized or size == 0:
+                os.remove(raw_path)
+                reason = "File exceeds the maximum allowed size." if oversized else "Empty file."
+                job = jobs.create_error_job("file", name, reason)
+            else:
+                job = jobs.create_file_job(raw_path, name, language)
+        except Exception as exc:
+            if os.path.exists(raw_path):
+                os.remove(raw_path)
+            job = jobs.create_error_job("file", name, str(exc))
+        created.append(job.id)
+
+    return {"created": created}
+
+
+class YoutubeJobsRequest(BaseModel):
+    urls: list[str]
+    language: str | None = None
+
+
+@app.post("/jobs/youtube")
+async def create_youtube_jobs(payload: YoutubeJobsRequest):
+    created = []
+    for url in payload.urls:
+        try:
+            video_id = extract_video_id(url)
+        except ValueError as exc:
+            job = jobs.create_error_job("youtube", url, str(exc))
+        else:
+            job = jobs.create_youtube_job(video_id, canonical_url(video_id), url, payload.language)
+        created.append(job.id)
+
+    return {"created": created}
+
+
+@app.get("/jobs")
+def list_jobs():
+    return [jobs.to_summary(j) for j in jobs.list_jobs()]
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    job = jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return jobs.to_detail(job)
+
+
+@app.delete("/jobs/finished")
+def clear_finished_jobs():
+    jobs.clear_finished()
+    return {"ok": True}

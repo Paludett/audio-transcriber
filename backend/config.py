@@ -16,6 +16,10 @@ MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(100 * 1024 * 1024))
 
 ALLOWED_EXTENSIONS = {".opus", ".ogg", ".m4a", ".mp3", ".wav"}
 
+# How many finished (done/error) jobs to keep in the in-memory queue history.
+# Active (queued/processing) jobs are never pruned.
+MAX_JOB_HISTORY = int(os.getenv("MAX_JOB_HISTORY", "50"))
+
 # YouTube transcription pipeline (captions first, Whisper fallback)
 YOUTUBE_MAX_DURATION_SECONDS = int(os.getenv("YOUTUBE_MAX_DURATION_SECONDS", str(2 * 60 * 60)))
 YOUTUBE_MAX_DOWNLOAD_BYTES = int(os.getenv("YOUTUBE_MAX_DOWNLOAD_BYTES", str(500 * 1024 * 1024)))

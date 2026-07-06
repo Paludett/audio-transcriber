@@ -1,6 +1,7 @@
 import ctypes
 import glob
 import logging
+import threading
 import time
 
 from faster_whisper import WhisperModel
@@ -11,6 +12,7 @@ logger = logging.getLogger("transcriber")
 
 _model: WhisperModel | None = None
 _active_device: str = config.DEVICE
+_model_lock = threading.Lock()
 
 
 def _preload_cuda_libs() -> None:
@@ -87,17 +89,17 @@ def transcribe_audio(wav_path: str, language: str | None = None) -> dict:
     lang = language or config.DEFAULT_LANGUAGE
 
     start = time.perf_counter()
-    segments_iter, info = model.transcribe(wav_path, language=lang, beam_size=5)
-
     segments = []
     full_text_parts = []
-    for seg in segments_iter:
-        segments.append({
-            "start": seg.start,
-            "end": seg.end,
-            "text": seg.text.strip(),
-        })
-        full_text_parts.append(seg.text.strip())
+    with _model_lock:
+        segments_iter, info = model.transcribe(wav_path, language=lang, beam_size=5)
+        for seg in segments_iter:
+            segments.append({
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text.strip(),
+            })
+            full_text_parts.append(seg.text.strip())
 
     processing_time = time.perf_counter() - start
 

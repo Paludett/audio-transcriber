@@ -15,6 +15,7 @@
     --accent: #4f8cff;
     --accent-hover: #3d76e0;
     --error: #ff5f5f;
+    --success: #4caf82;
   }
   * { box-sizing: border-box; }
   body {
@@ -84,16 +85,6 @@
   button.primary:hover { background: var(--accent-hover); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  #status { margin-top: 16px; display: none; align-items: center; gap: 10px; color: var(--muted); }
-  .spinner {
-    width: 18px; height: 18px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
   #error {
     display: none;
     margin-top: 16px;
@@ -105,12 +96,52 @@
     font-size: 0.9rem;
   }
 
-  #resultPanel { display: none; margin-top: 24px; }
-  #meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 8px; }
-  textarea#resultText {
-    width: 100%;
-    min-height: 260px;
+  #queueEmpty { color: var(--muted); font-size: 0.9rem; padding: 20px 0; text-align: center; }
+
+  .job-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
     background: var(--panel);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .job-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    cursor: pointer;
+    gap: 10px;
+  }
+  .job-card-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job-card-type { color: var(--muted); font-size: 0.8rem; margin-right: 8px; }
+  .job-badge {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .job-badge.processing { color: var(--accent); border-color: var(--accent); }
+  .job-badge.done { color: var(--success); border-color: var(--success); }
+  .job-badge.error { color: var(--error); border-color: var(--error); }
+  .job-card-detail { display: none; border-top: 1px solid var(--border); padding: 14px; }
+  .job-card.expanded .job-card-detail { display: block; }
+  .job-card-error-msg { color: #ffb3b3; font-size: 0.9rem; }
+
+  #meta, .job-meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 8px; }
+  textarea.transcript-box {
+    width: 100%;
+    min-height: 220px;
+    background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -121,24 +152,25 @@
     font-family: inherit;
   }
   .actions { display: flex; gap: 10px; margin-top: 12px; }
-  #copyFeedback { color: var(--accent); font-size: 0.85rem; margin-left: 4px; opacity: 0; transition: opacity .2s; }
+  .copy-feedback { color: var(--accent); font-size: 0.85rem; margin-left: 4px; opacity: 0; transition: opacity .2s; }
 </style>
 </head>
 <body>
 <main>
   <h1>Local Transcriber</h1>
-  <p class="subtitle">Drag an audio file (.opus, .ogg, .m4a, .mp3, .wav) or paste a YouTube link.</p>
+  <p class="subtitle">Drag audio files (.opus, .ogg, .m4a, .mp3, .wav) or paste a YouTube link. Everything you add goes into the queue.</p>
 
   <div id="tabs">
     <button id="tabFile" class="active">Audio file</button>
     <button id="tabYoutube">YouTube link</button>
+    <button id="tabQueue">Queue</button>
   </div>
 
   <div id="filePanel">
     <div id="dropzone">
-      <p><strong>Drop the file here</strong></p>
-      <p>or click to choose</p>
-      <input type="file" id="fileInput" accept=".opus,.ogg,.m4a,.mp3,.wav">
+      <p><strong>Drop files here</strong></p>
+      <p>or click to choose (you can select multiple)</p>
+      <input type="file" id="fileInput" accept=".opus,.ogg,.m4a,.mp3,.wav" multiple>
     </div>
     <div id="fileInfo"></div>
   </div>
@@ -147,7 +179,15 @@
     <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
   </div>
 
-  <div class="row">
+  <div id="queuePanel" style="display: none;">
+    <div id="queueEmpty">No jobs yet — add a file or a YouTube link and it will appear here.</div>
+    <div id="queueList"></div>
+    <div class="row" id="queueActions" style="display: none;">
+      <button id="clearFinishedBtn">Clear finished</button>
+    </div>
+  </div>
+
+  <div class="row" id="submitRow">
     <label for="language">Language:</label>
     <select id="language">
       <option value="en" selected>English</option>
@@ -155,68 +195,61 @@
       <option value="es">Spanish</option>
       <option value="">Detect automatically</option>
     </select>
-    <button class="primary" id="transcribeBtn" disabled>Transcribe</button>
-  </div>
-
-  <div id="status">
-    <div class="spinner"></div>
-    <span>Transcribing... this may take a few seconds</span>
+    <button class="primary" id="transcribeBtn" disabled>Add to Queue</button>
   </div>
 
   <div id="error"></div>
-
-  <div id="resultPanel">
-    <div id="meta"></div>
-    <textarea id="resultText" spellcheck="false"></textarea>
-    <div class="actions">
-      <button id="copyBtn">Copy</button>
-      <button id="exportBtn">Export .txt</button>
-      <span id="copyFeedback">Copied!</span>
-    </div>
-  </div>
 </main>
 
 <script>
 const API_BASE = "http://localhost:8000";
-const FILE_API_URL = `${API_BASE}/transcribe`;
-const YOUTUBE_API_URL = `${API_BASE}/transcribe/youtube`;
+const FILE_JOBS_URL = `${API_BASE}/jobs/files`;
+const YOUTUBE_JOBS_URL = `${API_BASE}/jobs/youtube`;
+const JOBS_URL = `${API_BASE}/jobs`;
 
 const tabFile = document.getElementById("tabFile");
 const tabYoutube = document.getElementById("tabYoutube");
+const tabQueue = document.getElementById("tabQueue");
 const filePanel = document.getElementById("filePanel");
 const youtubePanel = document.getElementById("youtubePanel");
+const queuePanel = document.getElementById("queuePanel");
 const youtubeUrlInput = document.getElementById("youtubeUrl");
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("fileInput");
 const fileInfo = document.getElementById("fileInfo");
 const languageSelect = document.getElementById("language");
+const submitRow = document.getElementById("submitRow");
 const transcribeBtn = document.getElementById("transcribeBtn");
-const statusEl = document.getElementById("status");
 const errorEl = document.getElementById("error");
-const resultPanel = document.getElementById("resultPanel");
-const metaEl = document.getElementById("meta");
-const resultText = document.getElementById("resultText");
-const copyBtn = document.getElementById("copyBtn");
-const exportBtn = document.getElementById("exportBtn");
-const copyFeedback = document.getElementById("copyFeedback");
+const queueEmpty = document.getElementById("queueEmpty");
+const queueList = document.getElementById("queueList");
+const queueActions = document.getElementById("queueActions");
+const clearFinishedBtn = document.getElementById("clearFinishedBtn");
 
-let selectedFile = null;
+let selectedFiles = [];
 let mode = "file";
-let lastResultName = "transcription";
+let pollHandle = null;
+const expandedJobIds = new Set();
+const jobDetailCache = new Map();
 
 function setMode(next) {
   mode = next;
-  const isFile = mode === "file";
-  tabFile.classList.toggle("active", isFile);
-  tabYoutube.classList.toggle("active", !isFile);
-  filePanel.style.display = isFile ? "block" : "none";
-  youtubePanel.style.display = isFile ? "none" : "block";
-  transcribeBtn.disabled = isFile ? !selectedFile : !youtubeUrlInput.value.trim();
+  tabFile.classList.toggle("active", mode === "file");
+  tabYoutube.classList.toggle("active", mode === "youtube");
+  tabQueue.classList.toggle("active", mode === "queue");
+  filePanel.style.display = mode === "file" ? "block" : "none";
+  youtubePanel.style.display = mode === "youtube" ? "block" : "none";
+  queuePanel.style.display = mode === "queue" ? "block" : "none";
+  submitRow.style.display = mode === "queue" ? "none" : "flex";
+  if (mode === "file") transcribeBtn.disabled = selectedFiles.length === 0;
+  if (mode === "youtube") transcribeBtn.disabled = !youtubeUrlInput.value.trim();
   hideError();
+  if (mode === "queue") ensurePolling();
 }
 
 tabFile.addEventListener("click", () => setMode("file"));
 tabYoutube.addEventListener("click", () => setMode("youtube"));
+tabQueue.addEventListener("click", () => setMode("queue"));
 youtubeUrlInput.addEventListener("input", () => {
   transcribeBtn.disabled = !youtubeUrlInput.value.trim();
 });
@@ -231,18 +264,18 @@ dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover
 dropzone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropzone.classList.remove("dragover");
-  if (e.dataTransfer.files.length) {
-    setFile(e.dataTransfer.files[0]);
-  }
+  if (e.dataTransfer.files.length) setFiles(e.dataTransfer.files);
 });
 
 fileInput.addEventListener("change", () => {
-  if (fileInput.files.length) setFile(fileInput.files[0]);
+  if (fileInput.files.length) setFiles(fileInput.files);
 });
 
-function setFile(file) {
-  selectedFile = file;
-  fileInfo.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+function setFiles(fileList) {
+  selectedFiles = Array.from(fileList);
+  fileInfo.textContent = selectedFiles.length === 1
+    ? `${selectedFiles[0].name} (${(selectedFiles[0].size / 1024 / 1024).toFixed(2)} MB)`
+    : `${selectedFiles.length} files: ${selectedFiles.map((f) => f.name).join(", ")}`;
   transcribeBtn.disabled = false;
   hideError();
 }
@@ -255,70 +288,204 @@ function hideError() {
   errorEl.style.display = "none";
 }
 
-function renderResult(data) {
-  resultText.value = data.text;
-
-  const parts = [`Duration: ${data.duration_seconds.toFixed(1)}s`, `Processed in: ${data.processing_time_seconds.toFixed(1)}s`, `${data.segments.length} segment(s)`];
-  if (data.video_title) parts.unshift(data.video_title);
-  if (data.source) parts.push(`Source: ${data.source === "captions" ? "YouTube captions" : "Whisper"}`);
-  metaEl.textContent = parts.join(" · ");
-
-  lastResultName = data.video_title || data.video_id || (selectedFile ? selectedFile.name.replace(/\.[^.]+$/, "") : "transcription");
-  resultPanel.style.display = "block";
-}
-
 transcribeBtn.addEventListener("click", async () => {
-  if (mode === "file" && !selectedFile) return;
+  if (mode === "file" && selectedFiles.length === 0) return;
   if (mode === "youtube" && !youtubeUrlInput.value.trim()) return;
 
   hideError();
-  resultPanel.style.display = "none";
-  statusEl.style.display = "flex";
   transcribeBtn.disabled = true;
 
   try {
-    let resp;
     if (mode === "file") {
       const formData = new FormData();
-      formData.append("file", selectedFile);
+      for (const file of selectedFiles) formData.append("files", file);
       if (languageSelect.value) formData.append("language", languageSelect.value);
-      resp = await fetch(FILE_API_URL, { method: "POST", body: formData });
+      const resp = await fetch(FILE_JOBS_URL, { method: "POST", body: formData });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `Error ${resp.status}`);
+      selectedFiles = [];
+      fileInfo.textContent = "";
+      fileInput.value = "";
     } else {
-      resp = await fetch(YOUTUBE_API_URL, {
+      const resp = await fetch(YOUTUBE_JOBS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: youtubeUrlInput.value.trim(), language: languageSelect.value || null }),
+        body: JSON.stringify({ urls: [youtubeUrlInput.value.trim()], language: languageSelect.value || null }),
       });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `Error ${resp.status}`);
+      youtubeUrlInput.value = "";
     }
 
-    const data = await resp.json();
-    if (!resp.ok) {
-      throw new Error(data.detail || `Error ${resp.status}`);
-    }
-
-    renderResult(data);
+    setMode("queue");
+    refreshJobs();
   } catch (err) {
-    showError(err.message || "Failed to transcribe. Check whether the backend is running.");
+    showError(err.message || "Failed to reach the backend.");
   } finally {
-    statusEl.style.display = "none";
-    transcribeBtn.disabled = false;
+    transcribeBtn.disabled = (mode === "file" ? selectedFiles.length === 0 : !youtubeUrlInput.value.trim());
   }
 });
 
-copyBtn.addEventListener("click", async () => {
-  await navigator.clipboard.writeText(resultText.value);
-  copyFeedback.style.opacity = "1";
-  setTimeout(() => (copyFeedback.style.opacity = "0"), 1200);
+function ensurePolling() {
+  if (pollHandle) return;
+  refreshJobs();
+  pollHandle = setInterval(refreshJobs, 2000);
+}
+
+function stopPolling() {
+  if (pollHandle) {
+    clearInterval(pollHandle);
+    pollHandle = null;
+  }
+}
+
+async function refreshJobs() {
+  let list;
+  try {
+    const resp = await fetch(JOBS_URL);
+    list = await resp.json();
+  } catch (err) {
+    return;
+  }
+
+  renderQueue(list);
+
+  const hasActive = list.some((j) => j.status === "queued" || j.status === "processing");
+  if (!hasActive) stopPolling();
+
+  for (const job of list) {
+    if (expandedJobIds.has(job.id) && job.status === "done" && !jobDetailCache.has(job.id)) {
+      loadJobDetail(job.id);
+    }
+  }
+}
+
+function statusLabel(status) {
+  return { queued: "Queued", processing: "Processing…", done: "Done", error: "Error" }[status] || status;
+}
+
+function renderJobCardHtml(job) {
+  const expanded = expandedJobIds.has(job.id);
+  const typeLabel = job.type === "youtube" ? "YouTube" : "File";
+  let detailHtml = "";
+  if (expanded) {
+    if (job.status === "done") {
+      const detail = jobDetailCache.get(job.id);
+      detailHtml = detail ? renderJobDetailHtml(job, detail) : "<p>Loading…</p>";
+    } else if (job.status === "error") {
+      detailHtml = `<p class="job-card-error-msg">${escapeHtml(job.error || "Unknown error.")}</p>`;
+    } else {
+      detailHtml = "<p>Waiting for transcription to finish…</p>";
+    }
+  }
+
+  return `
+    <div class="job-card ${expanded ? "expanded" : ""}" data-job-id="${job.id}">
+      <div class="job-card-header" data-role="toggle" data-job-id="${job.id}">
+        <span class="job-card-type">${typeLabel}</span>
+        <span class="job-card-name" title="${escapeHtml(job.name)}">${escapeHtml(job.name)}</span>
+        <span class="job-badge ${job.status}">${statusLabel(job.status)}</span>
+      </div>
+      <div class="job-card-detail">${detailHtml}</div>
+    </div>
+  `;
+}
+
+function renderJobDetailHtml(job, detail) {
+  const result = detail.result;
+  const parts = [`Duration: ${result.duration_seconds.toFixed(1)}s`, `Processed in: ${result.processing_time_seconds.toFixed(1)}s`, `${result.segments.length} segment(s)`];
+  if (result.video_title) parts.unshift(result.video_title);
+  if (result.source) parts.push(`Source: ${result.source === "captions" ? "YouTube captions" : "Whisper"}`);
+
+  return `
+    <div class="job-meta">${escapeHtml(parts.join(" · "))}</div>
+    <textarea class="transcript-box" data-job-id="${job.id}" spellcheck="false" readonly>${escapeHtml(result.text)}</textarea>
+    <div class="actions">
+      <button data-role="copy" data-job-id="${job.id}">Copy</button>
+      <button data-role="export" data-job-id="${job.id}">Export .txt</button>
+      <span class="copy-feedback" data-role="copy-feedback" data-job-id="${job.id}">Copied!</span>
+    </div>
+  `;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function renderQueue(list) {
+  queueEmpty.style.display = list.length === 0 ? "block" : "none";
+  queueActions.style.display = list.length === 0 ? "none" : "flex";
+  const sorted = [...list].sort((a, b) => b.created_at - a.created_at);
+  queueList.innerHTML = sorted.map(renderJobCardHtml).join("");
+}
+
+async function loadJobDetail(jobId) {
+  try {
+    const resp = await fetch(`${JOBS_URL}/${jobId}`);
+    if (!resp.ok) return;
+    const detail = await resp.json();
+    jobDetailCache.set(jobId, detail);
+    refreshQueueFromCache();
+  } catch (err) {
+    // ignore, will retry on next poll tick
+  }
+}
+
+function refreshQueueFromCache() {
+  // Re-render using the last known summaries plus whatever is now cached.
+  fetch(JOBS_URL).then((r) => r.json()).then(renderQueue).catch(() => {});
+}
+
+queueList.addEventListener("click", (e) => {
+  const toggleEl = e.target.closest('[data-role="toggle"]');
+  const copyEl = e.target.closest('[data-role="copy"]');
+  const exportEl = e.target.closest('[data-role="export"]');
+
+  if (copyEl) {
+    const detail = jobDetailCache.get(copyEl.dataset.jobId);
+    if (detail) {
+      navigator.clipboard.writeText(detail.result.text);
+      const feedback = queueList.querySelector(`[data-role="copy-feedback"][data-job-id="${copyEl.dataset.jobId}"]`);
+      if (feedback) {
+        feedback.style.opacity = "1";
+        setTimeout(() => (feedback.style.opacity = "0"), 1200);
+      }
+    }
+    return;
+  }
+
+  if (exportEl) {
+    const detail = jobDetailCache.get(exportEl.dataset.jobId);
+    if (detail) {
+      const blob = new Blob([detail.result.text], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(detail.name || "transcription").replace(/\.[^.]+$/, "")}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    return;
+  }
+
+  if (toggleEl) {
+    const jobId = toggleEl.dataset.jobId;
+    if (expandedJobIds.has(jobId)) {
+      expandedJobIds.delete(jobId);
+      refreshQueueFromCache();
+    } else {
+      expandedJobIds.add(jobId);
+      refreshQueueFromCache();
+      loadJobDetail(jobId);
+    }
+  }
 });
 
-exportBtn.addEventListener("click", () => {
-  const blob = new Blob([resultText.value], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${lastResultName}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
+clearFinishedBtn.addEventListener("click", async () => {
+  await fetch(JOBS_URL + "/finished", { method: "DELETE" });
+  refreshJobs();
 });
 </script>
 </body>
